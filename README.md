@@ -88,22 +88,54 @@ reasoning. See [§6 AI usage](#6-ai-usage).
 
 ## 5. Evaluation report
 
-> _Fill in from `evaluation_results.json` and `confusion_matrix.png` after running the notebook._
+### Baseline description
+
+**Model:** Groq `llama-3.3-70b-versatile` (zero-shot, no fine-tuning)
+
+**Prompt:** The model was given a system prompt defining the three labels and their decision boundaries. The prompt included:
+- One-sentence definitions of each label (analysis, hot_take, reaction)
+- Explicit decision rules for edge cases (e.g., emotional tone doesn't disqualify analysis if evidence is present; decorative statistics → hot_take)
+- Instructions to output only the label name, lowercase, no explanation
+
+See [baseline_prompt.md](baseline_prompt.md) for the complete prompt.
+
+**How results were collected:** The prompt was run on the locked test set (32 examples, unseen during dataset curation) with `temperature=0` for deterministic output. All 32 responses parsed cleanly (100% parseable). There was a 0.1s delay between requests to respect Groq's free-tier rate limits.
+
+---
 
 ### Overall accuracy
 
 | Model | Accuracy |
 |-------|---------:|
-| Zero-shot baseline (llama-3.3-70b-versatile) | _TBD_ |
+| Zero-shot baseline (llama-3.3-70b-versatile) | 0.8125 |
 | Fine-tuned DistilBERT | _TBD_ |
 
-### Per-class metrics
+### Per-class metrics (baseline)
 
-| Label | Model | Precision | Recall | F1 |
-|-------|-------|----------:|-------:|---:|
-| analysis | baseline / fine-tuned | _TBD_ | _TBD_ | _TBD_ |
-| hot_take | baseline / fine-tuned | _TBD_ | _TBD_ | _TBD_ |
-| reaction | baseline / fine-tuned | _TBD_ | _TBD_ | _TBD_ |
+| Label | Precision | Recall | F1 |
+|-------|----------:|-------:|---:|
+| analysis | 1.00 | 0.40 | 0.57 |
+| hot_take | 0.79 | 1.00 | 0.88 |
+| reaction | 0.79 | 1.00 | 0.88 |
+
+### Per-class metrics (fine-tuned)
+
+| Label | Precision | Recall | F1 |
+|-------|----------:|-------:|---:|
+| analysis | _TBD_ | _TBD_ | _TBD_ |
+| hot_take | _TBD_ | _TBD_ | _TBD_ |
+| reaction | _TBD_ | _TBD_ | _TBD_ |
+
+### Baseline reflection: where Groq struggles
+
+The zero-shot baseline reveals a striking asymmetry:
+
+- **Analysis (recall 0.40):** The baseline caught only 4 out of 10 true analysis comments. Whenever it *did* predict analysis, it was correct (precision 1.00), but it systematically missed 6 others.
+- **Hot_take & reaction (recall 1.00 each):** Perfect recall on both — the model caught every instance. But precision is only ~0.79, indicating some false positives.
+
+**Hypothesis:** The baseline is confusing analysis → hot_take. Without task-specific training, Groq struggles to distinguish "reasoned argument with evidence" from "confident assertion." When a comment lacks strong emotional language or an obvious verdict, Groq may default to labeling it as unsupported opinion rather than recognizing the logical structure supporting it. Examples that cite a statistic but don't use emotional markers (like "Having served on many grant review committees, I can say there's very little meritocracy...") likely read as bare assertions to a zero-shot model.
+
+**Expected improvement:** Fine-tuned DistilBERT should excel at catching the structural patterns of analysis—evidence chains, qualifiers, causal reasoning—after seeing 49 training examples. The recall on analysis should improve significantly; the fine-tuned model's overall accuracy should exceed the baseline's 0.8125.
 
 ### Confusion matrix (fine-tuned, test set)
 
