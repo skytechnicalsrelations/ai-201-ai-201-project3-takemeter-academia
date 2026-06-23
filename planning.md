@@ -3,10 +3,10 @@
 ## 1. Community
 
 ### Chosen Community
-r/AskAcademia
+r/academia
 
 ### Why This Community?
-This project studies discourse quality in r/AskAcademia, a public community where users discuss graduate school, academic careers, publishing, advising, and institutional norms. The classifier will distinguish between evidence-based advice, personal anecdotes, and unsupported takes. These distinctions matter because community members often rely on these comments to make serious academic and career decisions.
+This project studies discourse quality in r/academia, a public community where users discuss graduate school, academic careers, publishing, peer review, advising, and institutional norms. The classifier distinguishes between reasoned/evidence-based argument (`analysis`), confident unsupported opinion (`hot_take`), and emotional response (`reaction`). These distinctions matter because the threads mix all three constantly — a single post on, say, the peer-review system will draw structured cost-breakdown arguments, sweeping one-line verdicts, and pure congratulations/sympathy side by side — which is exactly the varied, quality-mixed discourse a classifier needs to be interesting.
 
 ---
 
@@ -78,12 +78,33 @@ Possible Labels: analysis, hot_take
 Decision Rule:
 A personal outcome is not evidence in the analysis sense unless it is framed as part of a broader pattern supported by data or reasoning. If the post is purely reporting what happened to the author and implicitly generalizing from it, label it **hot_take**. Label **analysis** only when the post moves beyond personal experience to explain a mechanism or cite external support.
 
+### Difficult Cases Encountered During Annotation
+
+These are real comments from `dataset.csv` (community: r/academia) that genuinely sat between two labels, with the decision I made and why. They are also flagged in the `notes` column of the dataset.
+
+**Case A — emotional framing wrapping a real argument → `analysis`**
+> "It's like this man experienced in real life the shouting into the void that is publishing. After 30 years of publishing in prestigious journals... I pick up books and articles in my field... and there is no mention of my work. At all... It's not personal - just poor scholarship... (Also I've just been made redundant in a pretty brutal way...)."
+
+Could be **reaction** (it ends on a depressed, personal note) or **analysis**. Decision: **analysis** — the bulk of the comment advances a claim about a phenomenon (declining citation rigor / poor scholarship) and supports it with specific, repeated observation. Per Edge Case 2, emotional tone alone does not demote a post that contains structured reasoning.
+
+**Case B — a statistic used decoratively → `hot_take`**
+> "Yeah, SpringerNature is worse, Open Access fees at Nature just hit almost $13,000 absolutly shameful and disgusting."
+
+Could be **analysis** (it cites a specific dollar figure) or **hot_take**. Decision: **hot_take** — the number is decorative rather than load-bearing; the comment asserts a verdict ("shameful and disgusting") instead of reasoning from the figure. This is exactly the "cherry-picked / decorative evidence" case in the spec's NBA example.
+
+**Case C — personal narrative with emotional close → `reaction`**
+> "...During the second year of my PhD every student had to present their research and I spent months on this presentation... Nobody showed up to the talk. There were 3 people in the audience... I was really upset about that."
+
+Could be **analysis** (a detailed account) or **reaction**. Decision: **reaction** — it is an experience shared to express a feeling, not to make a generalizable argument; the emotional close confirms emotion dominates. Per Edge Case 1, lived experience without a confident generalization stays reaction.
+
+(Additional borderline calls — e.g. "OA is really a new take on vanity press" → analysis because it explains the cost-shifting mechanism; "STEM elitism is a travesty" → hot_take because support is thin — are flagged inline in the dataset's `notes` column.)
+
 ---
 
 ## 4. Data Collection Plan
 
 ### Source
-Public comments and posts from r/AskAcademia collected manually via Reddit. Only top-level comments and post bodies will be collected (no nested replies, to reduce context-dependency).
+Public comments from r/academia, collected from full-thread page captures and parsed into individual comments. UI elements (vote counts, ads, "Reply"/"Share" controls) and very short/duplicate fragments were stripped programmatically; each retained comment was then read and labeled.
 
 ### Target Distribution
 - analysis: ~70 examples
