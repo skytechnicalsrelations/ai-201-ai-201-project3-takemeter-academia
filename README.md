@@ -305,8 +305,3 @@ changed/overrode. Disclose the annotation assistance below._
 | `evaluation_results.json` | _committed after running the notebook_ |
 | `confusion_matrix.png` | _committed after running the notebook_ |
 | `README.md` | This report |
-
-## Demo video
-
-_Link to 3–5 min demo: 3–5 posts classified with label + confidence, one correct prediction
-narrated, one incorrect narrated, and a walkthrough of this evaluation report._
