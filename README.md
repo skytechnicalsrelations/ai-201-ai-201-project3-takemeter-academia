@@ -305,3 +305,7 @@ changed/overrode. Disclose the annotation assistance below._
 | `evaluation_results.json` | _committed after running the notebook_ |
 | `confusion_matrix.png` | _committed after running the notebook_ |
 | `README.md` | This report |
+
+## Demo video
+
+https://drive.google.com/file/d/1WbcYUgLKOCwU-se5ESWCML8x0STDqu-W/view?usp=drive_link
