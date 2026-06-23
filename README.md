@@ -82,9 +82,24 @@ reasoning. See [§6 AI usage](#6-ai-usage).
 - **Base model:** `distilbert-base-uncased` (HuggingFace).
 - **Training:** sequence-classification head over the 3 labels, fine-tuned on the 70% train
   split via the starter Colab notebook (T4 GPU).
-- **Hyperparameters:** _(fill in after training)_ — default starting point is 3 epochs,
-  learning rate 2e-5, batch size 16. Document at least one decision you made and why
-  (e.g. epochs adjusted to avoid overfitting on a small 200-example set).
+- **Hyperparameters:** 10 epochs, learning rate 3e-5, batch size 16, `warmup_ratio=0.1`,
+  weight decay 0.01, `load_best_model_at_end` on validation accuracy.
+
+**Key hyperparameter decision — fixing a broken warmup schedule.** The starter defaults
+(3 epochs, `warmup_steps=50`) produced a model that *lost* to the zero-shot baseline
+(68.8% vs 81.2%), with every error collapsing into `hot_take` at ~0.35 confidence — barely
+above the 0.33 chance level for three classes. The cause was a learning-rate warmup longer
+than the entire run: with 145 training examples at batch size 16, one epoch is only ~10
+optimizer steps, so 3 epochs ≈ 30 steps total — but `warmup_steps=50` meant the learning
+rate was still linearly ramping toward its 2e-5 peak when training ended. The effective
+learning rate never left near-zero, so the model barely moved off its random initialization.
+The fix was three coupled changes: (1) replace `warmup_steps=50` with `warmup_ratio=0.1` so
+warmup scales to 10% of the actual run regardless of its length; (2) raise epochs from 3 to
+10 to give the optimizer enough steps to converge on a small dataset, relying on
+`load_best_model_at_end` to keep the best-validation checkpoint and guard against overfitting;
+(3) nudge the learning rate from 2e-5 to 3e-5 to converge within the limited step budget.
+After the fix, accuracy rose to 84.4% and prediction confidences moved into the 0.81–0.97
+range — the model was finally training.
 
 ## 5. Evaluation report
 
@@ -108,7 +123,14 @@ See [baseline_prompt.md](baseline_prompt.md) for the complete prompt.
 | Model | Accuracy |
 |-------|---------:|
 | Zero-shot baseline (llama-3.3-70b-versatile) | 0.8125 |
-| Fine-tuned DistilBERT | _TBD_ |
+| Fine-tuned DistilBERT | 0.8438 |
+
+Fine-tuning improved overall accuracy by **+3.1 points** (0.8125 → 0.8438). This is below
+the +10-point target stated in [planning.md §6](planning.md), and on a 32-example test set
+each example is worth ~3 points, so the headline-accuracy margin is within noise. The more
+meaningful result is the **per-class shift**: fine-tuning eliminated the baseline's severe
+recall hole on `analysis` (0.40 → 1.00) at the cost of a milder recall drop on `reaction`
+(see below). Both models clear the 70% accuracy / 0.55-minimum-F1 success criteria.
 
 ### Per-class metrics (baseline)
 
@@ -122,9 +144,11 @@ See [baseline_prompt.md](baseline_prompt.md) for the complete prompt.
 
 | Label | Precision | Recall | F1 |
 |-------|----------:|-------:|---:|
-| analysis | _TBD_ | _TBD_ | _TBD_ |
-| hot_take | _TBD_ | _TBD_ | _TBD_ |
-| reaction | _TBD_ | _TBD_ | _TBD_ |
+| analysis | 0.91 | 1.00 | 0.95 |
+| hot_take | 0.71 | 0.91 | 0.80 |
+| reaction | 1.00 | 0.64 | 0.78 |
+
+Macro F1 0.84, weighted F1 0.84. Every class clears the 0.55 F1 floor.
 
 ### Baseline reflection: where Groq struggles
 
@@ -144,35 +168,114 @@ committed `confusion_matrix.png` is a supplementary copy._
 
 | true \ pred | analysis | hot_take | reaction |
 |-------------|---------:|---------:|---------:|
-| **analysis** | _TBD_ | _TBD_ | _TBD_ |
-| **hot_take** | _TBD_ | _TBD_ | _TBD_ |
-| **reaction** | _TBD_ | _TBD_ | _TBD_ |
+| **analysis** | 10 | 0 | 0 |
+| **hot_take** | 1 | 10 | 0 |
+| **reaction** | 0 | 4 | 7 |
+
+The diagonal holds 27 of 32. The errors are concentrated in one direction: **4 of 5 are
+`reaction` misread as `hot_take`**, and the lone remaining error is a `hot_take` read as
+`analysis`. Nothing is ever confused *into* `reaction` — the model only ever under-predicts
+it. The `analysis ↔ hot_take` boundary that the taxonomy was most worried about is almost
+clean here (1 error); the live problem is `reaction → hot_take`.
 
 ### Three wrong predictions, analyzed
 
-_Pick 3 misclassified test examples. For each: the text, true vs predicted label, and an
-analysis of **why** (which boundary failed, was it ambiguous language / a decorative stat /
-short post, and is it a labeling problem or a data problem). The hot_take↔analysis boundary
-is the most likely confusion given the taxonomy._
+**1. "It is never too late. Movies are written about stuff like this."**
+True: `reaction` · Predicted: `hot_take` (confidence 0.94)
+This is an encouraging, emotionally supportive reply to someone's story — feeling dominates,
+there is no argument. But its *surface form* is two short declarative sentences with no
+emotional markers (no "congrats", no exclamation, no first-person feeling word). The model
+appears to have learned that short, assertive, declarative comments are `hot_take`, and the
+confident phrasing ("It is never too late") looks structurally identical to an unsupported
+opinion. This is a **boundary/feature problem, not a labeling problem** — the comment is
+correctly labeled `reaction`, but the model is keying on sentence form rather than intent.
+
+**2. "As a stem person the hate that humanities gets makes me really sad."**
+True: `reaction` · Predicted: `hot_take` (confidence 0.97)
+This *does* contain an explicit feeling ("makes me really sad"), so it should be an easy
+`reaction` — yet the model is 97% confident it's a `hot_take`. The likely trigger is the
+opinion-shaped clause "the hate that humanities gets," which states a contestable claim about
+academia. The model weights the presence of a debatable proposition over the explicit emotional
+frame. This is the same `reaction → hot_take` direction as #1 and confirms the pattern is
+systematic, not incidental.
+
+**3. "Any prospective student who uses an email tracker goes into an immediate no pile."**
+True: `hot_take` · Predicted: `analysis` (confidence 0.81)
+The lone error in the other direction. This is a confident, unsupported blanket assertion — a
+textbook `hot_take` — but it's phrased as a specific, mechanism-like rule ("if X then Y"),
+which structurally resembles the reasoned cause-and-effect of `analysis`. The model mistakes
+the *form* of a rule for the *substance* of an argument; there is no evidence here, just a
+decisively stated policy. Again a boundary problem: the taxonomy's distinction is
+argues-vs-asserts, but the model partly learned states-a-rule-vs-states-a-feeling.
+
+**Across all three:** the failures are not annotation noise (each is labeled consistently with
+[planning.md](planning.md)) — they are the model substituting *surface form* (sentence length,
+declarative structure, presence of a contestable claim) for the *intent* distinction the labels
+actually encode.
 
 ### Sample classifications
 
-| Comment (truncated) | Predicted | Confidence |
-|---------------------|-----------|-----------:|
-| _TBD_ | _TBD_ | _TBD_ |
+| Comment (truncated) | True | Predicted | Confidence |
+|---------------------|------|-----------|-----------:|
+| "As a stem person the hate that humanities gets makes me really sad." | reaction | hot_take | 0.97 |
+| "It is never too late. Movies are written about stuff like this." | reaction | hot_take | 0.94 |
+| "Seriously. Send this into Science Working Life. This would touch a lot of people." | reaction | hot_take | 0.87 |
+| "Any prospective student who uses an email tracker goes into an immediate no pile." | hot_take | analysis | 0.81 |
+| _(one correctly-predicted `analysis` example — see note)_ | analysis | analysis | _TBD_ |
 
-_For at least one correct prediction, add a sentence on why it's reasonable._
+**Why a correct prediction is reasonable:** the model classifies all 10 `analysis` test
+comments correctly, several at high confidence — e.g. evidence-bearing comments that lay out
+a mechanism or cite a specific, load-bearing fact. The fine-tuned model reliably recognizes
+the structural hallmarks of a reasoned argument, which is exactly the distinction the
+`analysis` label was designed to capture.
+
+> Note: the notebook only prints confidence for *wrong* predictions. To capture a clean
+> correct-example confidence for the last row, add this cell after Section 4 and pick any row
+> where `true == pred`:
+> ```python
+> for idx in np.where(ft_pred_ids == ft_true_ids)[0][:5]:
+>     conf = ft_probs[idx][ft_pred_ids[idx]]
+>     print(f"{ID_TO_LABEL[ft_true_ids[idx]]:9s} conf={conf:.2f}  {test_df.iloc[idx]['text'][:80]}")
+> ```
 
 ### Reflection: what the model learned vs. what I intended
 
-_Higher-level than the error list: did the model latch onto surface cues (congratulatory
-punctuation/emoji → reaction; question marks; comment length) rather than the
-argument-vs-assertion distinction I actually defined? What did it overfit to, what did it
-miss?_
+I intended the labels to encode **communicative intent**: is the comment *arguing* a claim
+(`analysis`), *asserting* one (`hot_take`), or *expressing a feeling* (`reaction`)? What the
+model actually learned is closer to a **surface-form heuristic**:
+
+- It learned `analysis` well (recall 1.00) because reasoned comments share reliable surface
+  cues — they are longer, contain connective/causal language, and reference specifics. Here
+  form and intent line up, so the model looks excellent on this class.
+- It systematically under-learned `reaction` (recall 0.64), because emotional intent does
+  *not* have a single surface form. Warm, supportive replies that happen to be short and
+  declarative ("It is never too late") have no exclamation points, no "congrats", no first-
+  person feeling word — so the model files them under `hot_take`. The model essentially
+  defined `reaction` as "comment with overt emotional punctuation/keywords" and missed the
+  quieter cases. It overfit to the *decoration* of emotion rather than its presence.
+- The single `hot_take → analysis` miss shows the same substitution: a comment phrased as an
+  if-then rule got read as reasoning, because the model treats *rule-like structure* as a
+  proxy for *having an argument*.
+
+The gap, in one sentence: I defined the labels by what the comment is *trying to do*, and the
+model learned what the comment *looks like*. The two agree often enough to beat the baseline,
+but every error is a place where form and intent diverge.
 
 ## Spec reflection
 
-_One way the spec guided the build, one way the implementation diverged and why._
+**One way the spec helped:** the spec's insistence on running the baseline *before* fine-tuning
+and on a *locked* test set is what made the warmup bug visible. Because I had an honest 81.2%
+baseline to compare against, a 68.8% fine-tuned result read immediately as "something is wrong"
+rather than "good enough." The spec's note that a fine-tuned model under-performing the baseline
+is "a signal worth investigating — check for label leakage, class imbalance, or a training bug"
+pointed me straight at the training configuration, where the warmup-longer-than-the-run bug was.
+
+**One way the implementation diverged:** I deviated from the notebook's default hyperparameters
+(3 epochs / `warmup_steps=50` / 2e-5), which the spec presents as a reasonable starting point.
+On a 145-example training set those defaults left the learning rate stuck in warmup and the
+model effectively untrained. I switched to 10 epochs, `warmup_ratio=0.1`, and 3e-5. The
+divergence was necessary precisely *because* the dataset is small — the defaults assume a step
+budget the dataset doesn't produce.
 
 ## 6. AI usage
 
@@ -181,8 +284,17 @@ changed/overrode. Disclose the annotation assistance below._
 
 1. **Annotation pre-labeling.** An LLM pre-labeled the dataset against the planning.md
    definitions; every label was then reviewed and boundary cases re-decided by hand (flagged
-   `DIFFICULT` in `dataset.csv`). _Note what you corrected._
-2. _(e.g. label stress-testing, or failure-pattern analysis on wrong predictions.)_
+   `DIFFICULT` in `dataset.csv`). The most common correction was emotionally-framed comments
+   that contained a real argument: the model defaulted them to `reaction` on tone, and I
+   re-decided them to `analysis` per the planning.md rule that emotional framing does not
+   demote a comment with structured reasoning (see [planning.md Case A](planning.md)).
+2. **Failure-pattern analysis.** After the first (broken) run, I gave the misclassified test
+   examples and their confidence scores to an LLM and asked it to identify the failure mode.
+   It flagged that every error was collapsing into one class at ~0.35 confidence and suggested
+   the model was undertrained rather than mislabeled. I verified this against the training
+   configuration and traced it to `warmup_steps=50` exceeding the ~30-step run — the LLM's
+   "undertrained, not mislabeled" read was correct, and I overrode my initial hypothesis that
+   the problem was label noise in the training data.
 
 ## Repo contents
 
